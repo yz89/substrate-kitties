@@ -1,37 +1,114 @@
-use support::{decl_module, decl_storage, StorageValue, StorageMap};
-use parity_codec::{Encode, Decode};
+use parity_codec::{Decode, Encode};
+use rstd::result;
 use runtime_io::blake2_128;
+use runtime_primitives::traits::{Bounded, One, SimpleArithmetic};
+use support::{
+    decl_module, decl_storage, dispatch::Result, ensure, Parameter, StorageMap, StorageValue,
+};
 use system::ensure_signed;
 
 pub trait Trait: system::Trait {
-
+    type KittyIndex: Parameter + Default + SimpleArithmetic + Bounded + Copy;
 }
 
-#[derive(Encode, Decode, Default)]
+#[derive(Encode, Decode)]
 pub struct Kitty(pub [u8; 16]);
 
 decl_storage! {
-	trait Store for Module<T: Trait> as Kitties {
-        pub Kitties get(kitty): map u32 => Kitty;
-        pub KittiesCount get(kitties_count): u32;
-	}
+    trait Store for Module<T: Trait> as Kitties {
+        /// Stores all the kitties, key is the kitty id / index
+        pub Kitties get(kitty): map T::KittyIndex => Option<Kitty>;
+        /// Stores the total number of kitties. i.e. the next kitty index
+        pub KittiesCount get(kitties_count): T::KittyIndex;
+        /// Get kitty ID by account ID and user kitty index
+        pub OwnedKitties get(owned_kitties): map (T::AccountId, T::KittyIndex) => T::KittyIndex;
+        /// Get number of kitties by account ID
+        pub OwnedKittiesCount get(owned_kittys_count): map T::AccountId => T::KittyIndex;
+    }
 }
 
 decl_module! {
-	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
+    pub struct Module<T: Trait> for enum Call where origin: T::Origin {
+        /// Create a new kitty
         pub fn create(origin) {
             let sender = ensure_signed(origin)?;
-            let payload = (
-                <system::Module<T>>::random_seed(),
-                sender,
-                <system::Module<T>>::extrinsic_index(),
-                <system::Module<T>>::block_number()
-            );
-            let dna = payload.using_encoded(blake2_128);
+            let kitty_id = Self::next_kitty_id()?;
+
+            // Generate a random 128 bit value
+            let dna = Self::random_value(&sender);
+
+            // Create and store kitty
             let kitty = Kitty(dna);
-            let count = Self::kitties_count();
-            <Kitties<T>>::insert(count, kitty);
-            <KittiesCount<T>>::put(count + 1);
+            Self::insert_kitty(sender, kitty_id, kitty);
         }
+
+        /// Breed kitties
+        pub fn breed(origin, kitty_id_1: T::KittyIndex, kitty_id_2: T::KittyIndex) {
+            let sender = ensure_signed(origin)?;
+            Self::do_breed(sender, kitty_id_1, kitty_id_2)?;
+        }
+    }
+}
+
+fn combine_dna(dna1: u8, dna2: u8, selector: u8) -> u8 {
+    ((selector & dna1) | (!selector & dna2))
+}
+
+impl<T: Trait> Module<T> {
+    fn random_value(sender: &T::AccountId) -> [u8; 16] {
+        let payload = (
+            <system::Module<T>>::random_seed(),
+            sender.clone(),
+            <system::Module<T>>::extrinsic_index(),
+            <system::Module<T>>::block_number(),
+        );
+        payload.using_encoded(blake2_128)
+    }
+
+    fn next_kitty_id() -> result::Result<T::KittyIndex, &'static str> {
+        let kitty_id = Self::kitties_count();
+        if kitty_id == T::KittyIndex::max_value() {
+            return Err("Kitties count overflow");
+        }
+        Ok(kitty_id)
+    }
+
+    fn insert_kitty(owner: T::AccountId, kitty_id: T::KittyIndex, kitty: Kitty) {
+        // Create and store kitty
+        <Kitties<T>>::insert(kitty_id, kitty);
+        <KittiesCount<T>>::put(kitty_id + One::one());
+
+        // Store the ownership information
+        let user_kitty_id = Self::owned_kittys_count(owner.clone());
+        <OwnedKitties<T>>::insert((owner.clone(), user_kitty_id), kitty_id);
+        <OwnedKittiesCount<T>>::insert(owner, user_kitty_id + One::one());
+    }
+
+    fn do_breed(
+        sender: T::AccountId,
+        kitty_id_1: T::KittyIndex,
+        kitty_id_2: T::KittyIndex,
+    ) -> Result {
+        let kitty1 = Self::kitty(kitty_id_1);
+        let kitty2 = Self::kitty(kitty_id_2);
+
+        ensure!(kitty1.is_some(), "Invalid kitty_id_1");
+        ensure!(kitty2.is_some(), "Invalid kitty_id_2");
+        ensure!(kitty_id_1 != kitty_id_2, "Needs different parents");
+
+        let new_kitty_id = Self::next_kitty_id()?;
+
+        let kitty1_dna = kitty1.unwrap().0;
+        let kitty2_dna = kitty2.unwrap().0;
+        let selector = Self::random_value(&sender);
+
+        let mut new_dna = [0u8; 16];
+        for i in 0..kitty1_dna.len() {
+            new_dna[i] = combine_dna(kitty1_dna[i], kitty2_dna[i], selector[i]);
+        }
+
+        let new_kitty = Kitty(new_dna);
+        Self::insert_kitty(sender, new_kitty_id, new_kitty);
+        Ok(())
     }
 }

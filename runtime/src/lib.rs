@@ -195,7 +195,7 @@ impl template::Trait for Runtime {
 }
 
 impl kitties::Trait for Runtime {
-
+	type KittyIndex = u32;
 }
 
 construct_runtime!(
