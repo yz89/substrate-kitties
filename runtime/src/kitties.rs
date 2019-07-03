@@ -20,10 +20,8 @@ decl_storage! {
         pub Kitties get(kitty): map T::KittyIndex => Option<Kitty>;
         /// Stores the total number of kitties. i.e. the next kitty index
         pub KittiesCount get(kitties_count): T::KittyIndex;
-        /// Get kitty ID by account ID and user kitty index
-        pub OwnedKitties get(owned_kitties): map (T::AccountId, T::KittyIndex) => T::KittyIndex;
-        /// Get number of kitties by account ID
-        pub OwnedKittiesCount get(owned_kittys_count): map T::AccountId => T::KittyIndex;
+        /// Get kitty owner by kitty index
+        pub OwnedKitties get(owned_kitties): map T::KittyIndex => T::AccountId;
     }
 }
 
@@ -46,6 +44,12 @@ decl_module! {
         pub fn breed(origin, kitty_id_1: T::KittyIndex, kitty_id_2: T::KittyIndex) {
             let sender = ensure_signed(origin)?;
             Self::do_breed(sender, kitty_id_1, kitty_id_2)?;
+        }
+
+        /// Transfer kitty
+        pub fn transfer(origin, recipient: T::AccountId, kitty_id: T::KittyIndex) {
+            let sender = ensure_signed(origin)?;
+            Self::do_transfer(sender, recipient, kitty_id)?;
         }
     }
 }
@@ -79,9 +83,7 @@ impl<T: Trait> Module<T> {
         <KittiesCount<T>>::put(kitty_id + One::one());
 
         // Store the ownership information
-        let user_kitty_id = Self::owned_kittys_count(owner.clone());
-        <OwnedKitties<T>>::insert((owner.clone(), user_kitty_id), kitty_id);
-        <OwnedKittiesCount<T>>::insert(owner, user_kitty_id + One::one());
+        <OwnedKitties<T>>::insert(kitty_id, owner);
     }
 
     fn do_breed(
@@ -109,6 +111,24 @@ impl<T: Trait> Module<T> {
 
         let new_kitty = Kitty(new_dna);
         Self::insert_kitty(sender, new_kitty_id, new_kitty);
+        Ok(())
+    }
+
+    fn do_transfer(
+        sender: T::AccountId,
+        recipient: T::AccountId,
+        kitty_id: T::KittyIndex,
+    ) -> Result {
+        // Check if the kitty exsit
+        let transfer_kitty = Self::kitty(kitty_id);
+        ensure!(transfer_kitty.is_some(), "Invalid transfer kitty");
+
+        // Check if the sender own this kitty
+        ensure!(Self::owned_kitties(kitty_id) == sender, "Sender must own the transfer kitty");
+
+        // Store the ownership information
+        <OwnedKitties<T>>::insert(kitty_id, recipient);
+
         Ok(())
     }
 }
