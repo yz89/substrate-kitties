@@ -195,7 +195,9 @@ impl template::Trait for Runtime {
 }
 
 impl kitties::Trait for Runtime {
+	type Event = Event;
 	type KittyIndex = u32;
+	type Currency = Balances;
 }
 
 construct_runtime!(
@@ -213,7 +215,7 @@ construct_runtime!(
 		Sudo: sudo,
 		// Used for the module template in `./template.rs`
 		TemplateModule: template::{Module, Call, Storage, Event<T>},
-		Kitties: kitties::{Module, Call, Storage},
+		Kitties: kitties::{Module, Call, Storage, Event<T>},
 	}
 );
 

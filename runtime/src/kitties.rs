@@ -3,13 +3,18 @@ use rstd::result;
 use runtime_io::blake2_128;
 use runtime_primitives::traits::{Bounded, Member, One, SimpleArithmetic};
 use support::{
-    decl_module, decl_storage, dispatch::Result, ensure, Parameter, StorageMap, StorageValue,
+    decl_module, decl_storage, decl_event, dispatch::Result, ensure, traits::Currency, Parameter, StorageMap,
+    StorageValue,
 };
 use system::ensure_signed;
 
 pub trait Trait: system::Trait {
+    type Event: From<Event<Self>> + Into<<Self as system::Trait>::Event>;
     type KittyIndex: Parameter + Member + Default + SimpleArithmetic + Bounded + Copy;
+    type Currency: Currency<Self::AccountId>;
 }
+
+type BalanceOf<T> = <<T as Trait>::Currency as Currency<<T as system::Trait>::AccountId>>::Balance;
 
 #[derive(Encode, Decode)]
 pub struct Kitty(pub [u8; 16]);
@@ -30,8 +35,28 @@ decl_storage! {
         /// Get kitty ownership. Stored in a linked map.
         pub OwnedKitties get(owned_kitties): map (T::AccountId, Option<T::KittyIndex>) =>
         Option<KittyLinkedItem<T>>;
+
+        pub KittyOwners get(kitty_owner): map T::KittyIndex => Option<T::AccountId>;
+        pub KittyPrices get(kitty_price): map T::KittyIndex => Option<BalanceOf<T>>;
     }
 }
+
+decl_event!(
+	pub enum Event<T> where
+		<T as system::Trait>::AccountId,
+		<T as Trait>::KittyIndex,
+		Balance = BalanceOf<T>,
+	{
+		/// A kitty is created. (owner, kitty_id)
+		Created(AccountId, KittyIndex),
+		/// A kitty is transferred. (from, to, kitty_id)
+		Transferred(AccountId, AccountId, KittyIndex),
+		/// A kitty is available for sale. (owner, kitty_id, price)
+		Ask(AccountId, KittyIndex, Option<Balance>),
+		/// A kitty is sold. (from, to, kitty_id, price)
+		Sold(AccountId, AccountId, KittyIndex, Balance),
+	}
+);
 
 decl_module! {
     pub struct Module<T: Trait> for enum Call where origin: T::Origin {
@@ -58,6 +83,41 @@ decl_module! {
         pub fn transfer(origin, recipient: T::AccountId, kitty_id: T::KittyIndex) {
             let sender = ensure_signed(origin)?;
             Self::do_transfer(sender, recipient, kitty_id)?;
+        }
+
+        pub fn ask(origin, kitty_id: T::KittyIndex, price: Option<BalanceOf<T>>) {
+            let sender = ensure_signed(origin)?;
+
+            ensure!(<OwnedKitties<T>>::exists(&(sender.clone(), Some(kitty_id))), "Only owner can set price for kitty");
+
+            if let Some(price) = price {
+                <KittyPrices<T>>::insert(kitty_id, price);
+            } else {
+                <KittyPrices<T>>::remove(kitty_id);
+            }
+        }
+
+        pub fn buy(origin, kitty_id: T::KittyIndex, price: BalanceOf<T>) {
+            let sender = ensure_signed(origin)?;
+
+            let owner = Self::kitty_owner(kitty_id);
+            ensure!(owner.is_some(), "Kitty does not exist");
+            let owner = owner.unwrap();
+
+            let kitty_price = Self::kitty_price(kitty_id);
+            ensure!(kitty_price.is_some(), "Kitty not for sale");
+            let kitty_price = kitty_price.unwrap();
+
+            ensure!(price >= kitty_price, "Price is too low");
+
+            T::Currency::transfer(&sender, &owner, kitty_price)?;
+
+            <KittyPrices<T>>::remove(kitty_id);
+
+            <OwnedKitties<T>>::remove(&owner, kitty_id);
+            <OwnedKitties<T>>::append(&sender, kitty_id);
+            <KittyOwners<T>>::insert(kitty_id, sender);
+
         }
     }
 }
@@ -154,6 +214,7 @@ impl<T: Trait> Module<T> {
         // Create and store kitty
         <Kitties<T>>::insert(kitty_id, kitty);
         <KittiesCount<T>>::put(kitty_id + One::one());
+        <KittyOwners<T>>::insert(kitty_id, owner);
 
         Self::insert_owned_kitty(owner, kitty_id);
     }
@@ -203,6 +264,7 @@ impl<T: Trait> Module<T> {
 
         <OwnedKitties<T>>::remove(&sender, kitty_id);
         <OwnedKitties<T>>::append(&recipient, kitty_id);
+        <KittyOwners<T>>::insert(kitty_id, recipient);
         Ok(())
     }
 }
