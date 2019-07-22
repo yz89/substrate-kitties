@@ -3,8 +3,8 @@ use rstd::result;
 use runtime_io::blake2_128;
 use runtime_primitives::traits::{Bounded, Member, One, SimpleArithmetic};
 use support::{
-    decl_module, decl_storage, decl_event, dispatch::Result, ensure, traits::Currency, Parameter, StorageMap,
-    StorageValue,
+    decl_event, decl_module, decl_storage, dispatch::Result, ensure, traits::Currency, Parameter,
+    StorageMap, StorageValue,
 };
 use system::ensure_signed;
 
@@ -60,6 +60,8 @@ decl_event!(
 
 decl_module! {
     pub struct Module<T: Trait> for enum Call where origin: T::Origin {
+        fn deposit_event<T>() = default;
+
         /// Create a new kitty
         pub fn create(origin) {
             let sender = ensure_signed(origin)?;
@@ -71,18 +73,24 @@ decl_module! {
             // Create and store kitty
             let kitty = Kitty(dna);
             Self::insert_kitty(&sender, kitty_id, kitty);
+
+            Self::deposit_event(RawEvent::Created(sender, kitty_id));
         }
 
         /// Breed kitties
         pub fn breed(origin, kitty_id_1: T::KittyIndex, kitty_id_2: T::KittyIndex) {
             let sender = ensure_signed(origin)?;
-            Self::do_breed(&sender, kitty_id_1, kitty_id_2)?;
+            let new_kitty_id = Self::do_breed(&sender, kitty_id_1, kitty_id_2)?;
+
+            Self::deposit_event(RawEvent::Created(sender, new_kitty_id));
         }
 
         /// Transfer kitty
         pub fn transfer(origin, recipient: T::AccountId, kitty_id: T::KittyIndex) {
             let sender = ensure_signed(origin)?;
-            Self::do_transfer(sender, recipient, kitty_id)?;
+            Self::do_transfer(&sender, &recipient, kitty_id)?;
+
+            Self::deposit_event(RawEvent::Transferred(sender, recipient, kitty_id));
         }
 
         pub fn ask(origin, kitty_id: T::KittyIndex, price: Option<BalanceOf<T>>) {
@@ -95,6 +103,8 @@ decl_module! {
             } else {
                 <KittyPrices<T>>::remove(kitty_id);
             }
+
+            Self::deposit_event(RawEvent::Ask(sender, kitty_id, price));
         }
 
         pub fn buy(origin, kitty_id: T::KittyIndex, price: BalanceOf<T>) {
@@ -116,8 +126,9 @@ decl_module! {
 
             <OwnedKitties<T>>::remove(&owner, kitty_id);
             <OwnedKitties<T>>::append(&sender, kitty_id);
-            <KittyOwners<T>>::insert(kitty_id, sender);
+            <KittyOwners<T>>::insert(kitty_id, &sender);
 
+            Self::deposit_event(RawEvent::Sold(owner, sender, kitty_id, kitty_price));
         }
     }
 }
@@ -223,7 +234,7 @@ impl<T: Trait> Module<T> {
         sender: &T::AccountId,
         kitty_id_1: T::KittyIndex,
         kitty_id_2: T::KittyIndex,
-    ) -> Result {
+    ) -> result::Result<T::KittyIndex, &'static str> {
         let kitty1 = Self::kitty(kitty_id_1);
         let kitty2 = Self::kitty(kitty_id_2);
 
@@ -244,12 +255,12 @@ impl<T: Trait> Module<T> {
 
         let new_kitty = Kitty(new_dna);
         Self::insert_kitty(sender, new_kitty_id, new_kitty);
-        Ok(())
+        Ok(new_kitty_id)
     }
 
     fn do_transfer(
-        sender: T::AccountId,
-        recipient: T::AccountId,
+        sender: &T::AccountId,
+        recipient: &T::AccountId,
         kitty_id: T::KittyIndex,
     ) -> Result {
         // Check if the kitty exsit
