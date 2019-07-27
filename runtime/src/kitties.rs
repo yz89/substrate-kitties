@@ -7,6 +7,7 @@ use support::{
     StorageMap, StorageValue,
 };
 use system::ensure_signed;
+use crate::linked_item::{LinkedList, LinkedItem};
 
 pub trait Trait: system::Trait {
     type Event: From<Event<Self>> + Into<<Self as system::Trait>::Event>;
@@ -19,12 +20,8 @@ type BalanceOf<T> = <<T as Trait>::Currency as Currency<<T as system::Trait>::Ac
 #[derive(Encode, Decode)]
 pub struct Kitty(pub [u8; 16]);
 
-#[cfg_attr(feature = "std", derive(Debug, PartialEq, Eq))]
-#[derive(Encode, Decode)]
-pub struct KittyLinkedItem<T: Trait> {
-    pub prev: Option<T::KittyIndex>,
-    pub next: Option<T::KittyIndex>,
-}
+type KittyLinkedItem<T> = LinkedItem<<T as Trait>::KittyIndex>;
+type OwnedKittiesList<T> = LinkedList<OwnedKitties<T>, <T as system::Trait>::AccountId, <T as Trait>::KittyIndex>;
 
 decl_storage! {
     trait Store for Module<T: Trait> as Kitties {
@@ -124,8 +121,8 @@ decl_module! {
 
             <KittyPrices<T>>::remove(kitty_id);
 
-            <OwnedKitties<T>>::remove(&owner, kitty_id);
-            <OwnedKitties<T>>::append(&sender, kitty_id);
+            <OwnedKittiesList<T>>::remove(&owner, kitty_id);
+            <OwnedKittiesList<T>>::append(&sender, kitty_id);
             <KittyOwners<T>>::insert(kitty_id, &sender);
 
             Self::deposit_event(RawEvent::Sold(owner, sender, kitty_id, kitty_price));
@@ -135,67 +132,6 @@ decl_module! {
 
 fn combine_dna(dna1: u8, dna2: u8, selector: u8) -> u8 {
     ((selector & dna1) | (!selector & dna2))
-}
-
-impl<T: Trait> OwnedKitties<T> {
-    fn read_head(account: &T::AccountId) -> KittyLinkedItem<T> {
-        Self::read(account, None)
-    }
-
-    fn write_head(account: &T::AccountId, item: KittyLinkedItem<T>) {
-        Self::write(account, None, item)
-    }
-
-    fn read(account: &T::AccountId, key: Option<T::KittyIndex>) -> KittyLinkedItem<T> {
-        <OwnedKitties<T>>::get(&(account.clone(), key)).unwrap_or_else(|| KittyLinkedItem {
-            prev: None,
-            next: None,
-        })
-    }
-
-    fn write(account: &T::AccountId, key: Option<T::KittyIndex>, item: KittyLinkedItem<T>) {
-        <OwnedKitties<T>>::insert(&(account.clone(), key), item);
-    }
-
-    fn append(account: &T::AccountId, kitty_id: T::KittyIndex) {
-        let head = Self::read_head(account);
-        let new_head = KittyLinkedItem {
-            prev: Some(kitty_id),
-            next: head.next,
-        };
-        Self::write_head(account, new_head);
-
-        let prev = Self::read(account, head.prev);
-        let new_prev = KittyLinkedItem {
-            prev: prev.prev,
-            next: Some(kitty_id),
-        };
-        Self::write(account, head.prev, new_prev);
-
-        let item = KittyLinkedItem {
-            prev: head.prev,
-            next: None,
-        };
-        Self::write(account, Some(kitty_id), item);
-    }
-
-    fn remove(account: &T::AccountId, kitty_id: T::KittyIndex) {
-        if let Some(item) = <OwnedKitties<T>>::take(&(account.clone(), Some(kitty_id))) {
-            let prev = Self::read(account, item.prev);
-            let new_prev = KittyLinkedItem {
-                prev: prev.prev,
-                next: item.next,
-            };
-            Self::write(account, item.prev, new_prev);
-
-            let next = Self::read(account, item.next);
-            let new_next = KittyLinkedItem {
-                prev: item.prev,
-                next: next.next,
-            };
-            Self::write(account, item.next, new_next);
-        }
-    }
 }
 
 impl<T: Trait> Module<T> {
@@ -218,7 +154,7 @@ impl<T: Trait> Module<T> {
     }
 
     fn insert_owned_kitty(owner: &T::AccountId, kitty_id: T::KittyIndex) {
-        <OwnedKitties<T>>::append(owner, kitty_id);
+        <OwnedKittiesList<T>>::append(owner, kitty_id);
     }
 
     fn insert_kitty(owner: &T::AccountId, kitty_id: T::KittyIndex, kitty: Kitty) {
@@ -273,8 +209,8 @@ impl<T: Trait> Module<T> {
             "Only owner can transfer kitty"
         );
 
-        <OwnedKitties<T>>::remove(&sender, kitty_id);
-        <OwnedKitties<T>>::append(&recipient, kitty_id);
+        <OwnedKittiesList<T>>::remove(&sender, kitty_id);
+        <OwnedKittiesList<T>>::append(&recipient, kitty_id);
         <KittyOwners<T>>::insert(kitty_id, recipient);
         Ok(())
     }
