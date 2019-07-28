@@ -1,18 +1,35 @@
 use support::{StorageMap, Parameter};
 use runtime_primitives::traits::Member;
-use parity_codec::{Encode, Decode};
+use parity_codec::{Encode, Decode, Input, Output};
 
 #[cfg_attr(feature = "std", derive(Debug, PartialEq, Eq))]
-#[derive(Encode, Decode)]
 pub struct LinkedItem<Item> {
 	pub prev: Option<Item>,
 	pub next: Option<Item>,
 }
 
+impl<Item> Encode for LinkedItem<Item> where Item: Encode + Default + Copy {
+    fn encode_to<T: Output>(&self, output: &mut T) {
+       self.prev.unwrap_or_default().encode_to(output);
+	   self.next.unwrap_or_default().encode_to(output);
+    }
+}
+
+impl<Item> Decode for LinkedItem<Item> where Item: Decode {
+    fn decode<I: Input>(input: &mut I) -> Option<Self> {
+		Some(
+			LinkedItem{
+				prev: Decode::decode(input)?,
+				next: Decode::decode(input)?,
+			}
+		)
+    }
+}
+
 pub struct LinkedList<Storage, Key, Item>(rstd::marker::PhantomData<(Storage, Key, Item)>);
 
 impl<Storage, Key, Value> LinkedList<Storage, Key, Value> where
-  Value: Parameter + Member + Copy,
+  Value: Parameter + Member + Copy + Default,
   Key: Parameter,
   Storage: StorageMap<(Key, Option<Value>), LinkedItem<Value>, Query = Option<LinkedItem<Value>>>,
 {

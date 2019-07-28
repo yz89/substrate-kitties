@@ -1,4 +1,4 @@
-use parity_codec::{Decode, Encode};
+use parity_codec::{Decode, Encode, Input, Output};
 use rstd::result;
 use runtime_io::blake2_128;
 use runtime_primitives::traits::{Bounded, Member, One, SimpleArithmetic};
@@ -17,8 +17,26 @@ pub trait Trait: system::Trait {
 
 type BalanceOf<T> = <<T as Trait>::Currency as Currency<<T as system::Trait>::AccountId>>::Balance;
 
-#[derive(Encode, Decode)]
-pub struct Kitty(pub [u8; 16]);
+// pub struct Kitty(pub [u8; 16]);
+pub struct Kitty {
+    dna: [u8; 16]
+}
+
+impl Encode for Kitty {
+    fn encode_to<T: Output>(&self, output: &mut T) {
+        for i in 0..16 { output.push_byte(self.dna[i]) }
+    }
+}
+
+impl Decode for Kitty {
+    fn decode<I: Input>(input: &mut I) -> Option<Self> {
+        let mut dna = [0u8; 16];
+        for i in 0..16 {
+            dna[i] = input.read_byte()?;
+        }
+        Some(Kitty{dna})
+    }
+}
 
 type KittyLinkedItem<T> = LinkedItem<<T as Trait>::KittyIndex>;
 type OwnedKittiesList<T> = LinkedList<OwnedKitties<T>, <T as system::Trait>::AccountId, <T as Trait>::KittyIndex>;
@@ -68,7 +86,7 @@ decl_module! {
             let dna = Self::random_value(&sender);
 
             // Create and store kitty
-            let kitty = Kitty(dna);
+            let kitty = Kitty{dna};
             Self::insert_kitty(&sender, kitty_id, kitty);
 
             Self::deposit_event(RawEvent::Created(sender, kitty_id));
@@ -180,8 +198,8 @@ impl<T: Trait> Module<T> {
 
         let new_kitty_id = Self::next_kitty_id()?;
 
-        let kitty1_dna = kitty1.unwrap().0;
-        let kitty2_dna = kitty2.unwrap().0;
+        let kitty1_dna = kitty1.unwrap().dna;
+        let kitty2_dna = kitty2.unwrap().dna;
         let selector = Self::random_value(&sender);
 
         let mut new_dna = [0u8; 16];
@@ -189,7 +207,7 @@ impl<T: Trait> Module<T> {
             new_dna[i] = combine_dna(kitty1_dna[i], kitty2_dna[i], selector[i]);
         }
 
-        let new_kitty = Kitty(new_dna);
+        let new_kitty = Kitty{dna:new_dna};
         Self::insert_kitty(sender, new_kitty_id, new_kitty);
         Ok(new_kitty_id)
     }
